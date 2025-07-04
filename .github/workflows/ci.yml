@@ -105,10 +105,14 @@ jobs:
 
             cd /home/chemavx/apuestas-predictor
 
+            # 1) Sincronizar repo con main
             git fetch origin main
             git reset --hard origin/main
 
-            # (Re)create the ingestion-env Secret in K3s
+            # 2) Asegurar que el namespace 'apuestas' existe
+            kubectl create namespace apuestas --dry-run=client -o yaml | kubectl apply -f -
+
+            # 3) (Re)crear Secret ingestion-env en el namespace 'apuestas'
             kubectl create secret generic ingestion-env \
               --from-literal=FOOTBALL_DATA_TOKEN="${{ secrets.FOOTBALL_DATA_TOKEN }}" \
               --from-literal=ODDS_API_KEY="${{ secrets.ODDS_API_KEY }}" \
@@ -117,14 +121,14 @@ jobs:
               --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
               --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
               --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
-              --dry-run=client -o yaml | kubectl apply -f -
+              --dry-run=client -o yaml | kubectl apply -n apuestas -f -
 
-            # Deploy main app
-            kubectl apply -f k8s/deployment.yaml
-            kubectl rollout status deployment/apuestas-predictor
+            # 4) Desplegar la app principal en 'apuestas'
+            kubectl apply -n apuestas -f k8s/deployment.yaml
+            kubectl rollout status deployment/apuestas-predictor -n apuestas
 
-            # Deploy ingestion service
-            kubectl apply -f infra/manifests/ingestion.yaml
-            kubectl rollout status deployment/ingestion
+            # 5) Desplegar el microservicio de ingesta en 'apuestas'
+            kubectl apply -n apuestas -f infra/manifests/ingestion.yaml
+            kubectl rollout status deployment/ingestion -n apuestas
 
-            echo "✅ Deployment complete on $HOST"
+            echo "✅ Deployment complete in namespace apuestas"
