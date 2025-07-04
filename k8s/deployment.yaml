@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apuestas-predictor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: apuestas-predictor
+  template:
+    metadata:
+      labels:
+        app: apuestas-predictor
+    spec:
+      # Si GHCR es privado:
+      imagePullSecrets:
+        - name: ghcr-registry
+      containers:
+        - name: apuestas-predictor
+          image: ghcr.io/chemavx-git/apuestas-predictor:latest
+          ports:
+            - containerPort: 80
+          # aquí podrías añadir env vars, resources, etc.
