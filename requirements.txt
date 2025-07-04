@@ -1,0 +1,9 @@
+# Dependencias para tu app raíz (lint, tests y microservicio de ingesta)
+black
+flake8
+pytest
+requests
+psycopg2-binary
+sqlalchemy
+tenacity
+python-dotenv
