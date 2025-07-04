@@ -4,7 +4,10 @@ import logging
 from datetime import datetime
 import requests
 from tenacity import (
-    retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
 )
 from sqlalchemy.exc import SQLAlchemyError
 from models import SessionLocal, Team, Match, Odds, engine, Base
@@ -19,16 +22,18 @@ ODDS_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
 HEADERS_FD = {"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
 ODDS_KEY = os.getenv("ODDS_API_KEY")
 
+
 # Decorador de reintentos para llamadas HTTP
 @retry(
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(requests.exceptions.RequestException)
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
 )
 def fetch_json(url, params=None, headers=None):
     resp = requests.get(url, params=params, headers=headers, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
 
 def ingest_football_data():
     session = SessionLocal()
@@ -55,10 +60,18 @@ def ingest_football_data():
                 if not session.query(Match).filter_by(external_id=ext_id).first():
                     match = Match(
                         external_id=ext_id,
-                        utc_date=datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")),
-                        home_team_id=session.query(Team).filter_by(name=m["homeTeam"]["name"]).one().id,
-                        away_team_id=session.query(Team).filter_by(name=m["awayTeam"]["name"]).one().id,
-                        competition=m["competition"]["name"]
+                        utc_date=datetime.fromisoformat(
+                            m["utcDate"].replace("Z", "+00:00")
+                        ),
+                        home_team_id=session.query(Team)
+                        .filter_by(name=m["homeTeam"]["name"])
+                        .one()
+                        .id,
+                        away_team_id=session.query(Team)
+                        .filter_by(name=m["awayTeam"]["name"])
+                        .one()
+                        .id,
+                        competition=m["competition"]["name"],
                     )
                     session.add(match)
                     session.commit()
@@ -70,10 +83,16 @@ def ingest_football_data():
     finally:
         session.close()
 
+
 def ingest_odds_data():
     session = SessionLocal()
     try:
-        params = {"apiKey": ODDS_KEY, "regions": "eu", "markets": "h2h", "prematch": "true"}
+        params = {
+            "apiKey": ODDS_KEY,
+            "regions": "eu",
+            "markets": "h2h",
+            "prematch": "true",
+        }
         odds_list = fetch_json(ODDS_URL, params=params)
         for o in odds_list:
             match = session.query(Match).filter_by(external_id=o["id"]).first()
@@ -87,7 +106,7 @@ def ingest_odds_data():
                             provider=site["title"],
                             market=market["key"],
                             decimal_odds=outcome["price"],
-                            fetched_at=datetime.utcnow()
+                            fetched_at=datetime.utcnow(),
                         )
                         session.add(odd)
         session.commit()
@@ -96,6 +115,7 @@ def ingest_odds_data():
         logging.error(f"Error ingestando Odds-API: {e}")
     finally:
         session.close()
+
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)

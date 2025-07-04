@@ -1,5 +1,11 @@
 from sqlalchemy import (
-    Column, Integer, String, DateTime, Float, ForeignKey, UniqueConstraint
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Float,
+    ForeignKey,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -42,9 +48,7 @@ class Match(Base):
     home_team = relationship("Team", foreign_keys=[home_team_id])
     away_team = relationship("Team", foreign_keys=[away_team_id])
 
-    __table_args__ = (
-        UniqueConstraint('external_id', name='uq_match_external'),
-    )
+    __table_args__ = (UniqueConstraint("external_id", name="uq_match_external"),)
 
 
 class Odds(Base):
@@ -57,6 +61,7 @@ class Odds(Base):
     fetched_at = Column(DateTime, nullable=False)
 
     match = relationship("Match")
+
 
 # Crear tablas (solo una vez, o manejado vía Alembic en producción)
 if __name__ == "__main__":
