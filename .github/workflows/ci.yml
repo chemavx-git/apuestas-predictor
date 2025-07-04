@@ -83,8 +83,8 @@ jobs:
           docker push ${IMAGE}:latest
 
   deploy:
-    name: Deploy via SSH to Mini PC
-    runs-on: ubuntu-latest
+    name: Deploy en Mini PC (self-hosted)
+    runs-on: [self-hosted, linux]
     needs: ci
 
     steps:
@@ -93,42 +93,35 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Run remote deploy on K3s host
-        uses: appleboy/ssh-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          # strict: false
-          script: |
-            set -e
+      - name: Desplegar con kubectl en K3s
+        run: |
+          set -e
+          cd /home/chemavx/apuestas-predictor
 
-            cd /home/chemavx/apuestas-predictor
+          # 1) Sincroniza repo con main
+          git fetch origin main
+          git reset --hard origin/main
 
-            # 1) Sincronizar repo con main
-            git fetch origin main
-            git reset --hard origin/main
+          # 2) Asegura namespace
+          kubectl create namespace apuestas --dry-run=client -o yaml | kubectl apply -f -
 
-            # 2) Asegurar que el namespace 'apuestas' existe
-            kubectl create namespace apuestas --dry-run=client -o yaml | kubectl apply -f -
+          # 3) (Re)crea Secret ingestion-env en 'apuestas'
+          kubectl create secret generic ingestion-env \
+            --from-literal=FOOTBALL_DATA_TOKEN="${{ secrets.FOOTBALL_DATA_TOKEN }}" \
+            --from-literal=ODDS_API_KEY="${{ secrets.ODDS_API_KEY }}" \
+            --from-literal=DB_USER="${{ secrets.DB_USER }}" \
+            --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
+            --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
+            --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
+            --dry-run=client -o yaml | kubectl apply -n apuestas -f -
 
-            # 3) (Re)crear Secret ingestion-env en el namespace 'apuestas'
-            kubectl create secret generic ingestion-env \
-              --from-literal=FOOTBALL_DATA_TOKEN="${{ secrets.FOOTBALL_DATA_TOKEN }}" \
-              --from-literal=ODDS_API_KEY="${{ secrets.ODDS_API_KEY }}" \
-              --from-literal=DB_USER="${{ secrets.DB_USER }}" \
-              --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-              --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
-              --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
-              --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
-              --dry-run=client -o yaml | kubectl apply -n apuestas -f -
+          # 4) Despliega la app principal
+          kubectl apply -n apuestas -f k8s/deployment.yaml
+          kubectl rollout status deployment/apuestas-predictor -n apuestas
 
-            # 4) Desplegar la app principal en 'apuestas'
-            kubectl apply -n apuestas -f k8s/deployment.yaml
-            kubectl rollout status deployment/apuestas-predictor -n apuestas
+          # 5) Despliega el microservicio de ingesta
+          kubectl apply -n apuestas -f infra/manifests/ingestion.yaml
+          kubectl rollout status deployment/ingestion -n apuestas
 
-            # 5) Desplegar el microservicio de ingesta en 'apuestas'
-            kubectl apply -n apuestas -f infra/manifests/ingestion.yaml
-            kubectl rollout status deployment/ingestion -n apuestas
-
-            echo "✅ Deployment complete in namespace apuestas"
+          echo "✅ Deployment complete in namespace apuestas"
