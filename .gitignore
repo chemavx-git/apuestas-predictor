@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+data/raw/
+.venv/
+*.env
+.kube/**
+# Ignorar virtualenv y entorno local de Ingestión
+/services/ingestion/.venv/
+/services/ingestion/.env
+
+# Si tu app principal también tiene .env o venv, añádelas
+/.env
+/venv/
