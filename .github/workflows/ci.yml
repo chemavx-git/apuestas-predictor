@@ -1,0 +1,65 @@
+# .github/workflows/ci.yml
+
+name: CI Pipeline
+
+# Se dispara al empujar o abrir PR contra main
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ci:
+    name: Lint → Test → Build Docker
+    runs-on: ubuntu-latest
+
+    env:
+      # Cambia aquí la versión de Python si lo necesitas
+      DEFAULT_PYTHON_VERSION: '3.10'
+
+    steps:
+      # 1️⃣ Clonar el repo
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2️⃣ Configurar Python
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      # 3️⃣ Cache de pip para acelerar
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # 4️⃣ Instalar dependencias
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 5️⃣ Formateo con Black (solo chequeo)
+      - name: Run Black
+        run: |
+          black --check .
+
+      # 6️⃣ Análisis estático con Flake8
+      - name: Run Flake8
+        run: |
+          flake8 .
+
+      # 7️⃣ Ejecución de tests con pytest
+      - name: Run Tests
+        run: |
+          pytest --maxfail=1 --disable-warnings -q
+
+      # 8️⃣ Construir imagen Docker
+      - name: Build Docker image
+        run: |
+          docker build . -t gmktec-g5-app:${{ github.sha }}
