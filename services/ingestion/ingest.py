@@ -9,7 +9,6 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
-from sqlalchemy.exc import SQLAlchemyError
 from models import SessionLocal, Team, Match, Odds, engine, Base
 from dotenv import load_dotenv
 
