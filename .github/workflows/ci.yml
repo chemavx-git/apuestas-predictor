@@ -1,5 +1,3 @@
-# .github/workflows/ci.yml
-
 name: CI & Deploy Pipeline
 
 on:
@@ -10,6 +8,7 @@ on:
 
 env:
   DEFAULT_PYTHON_VERSION: '3.10'
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 jobs:
   ci:
@@ -39,20 +38,19 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Black
-        run: |
-          black --check .
+        run: black --check .
 
       - name: Run Flake8
-        run: |
-          flake8 .
+        run: flake8 .
 
       - name: Run Tests
-        run: |
-          pytest --maxfail=1 --disable-warnings -q
+        run: pytest --maxfail=1 --disable-warnings -q
 
-      - name: Build Docker image
+      # — Build & Push App Principal —
+      - name: Build main app image
         run: |
-          docker build . -t gmktec-g5-app:${{ github.sha }}
+          docker build . -f Dockerfile \
+            -t gmktec-g5-app:${{ github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v2
@@ -61,17 +59,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push Docker image to GHCR
+      - name: Tag & Push main app
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/apuestas-predictor
+          IMAGE=${{ env.IMAGE_REGISTRY }}/apuestas-predictor
           TAG=${{ github.sha }}
           docker tag gmktec-g5-app:${TAG} ${IMAGE}:${TAG}
           docker tag gmktec-g5-app:${TAG} ${IMAGE}:latest
           docker push ${IMAGE}:${TAG}
           docker push ${IMAGE}:latest
 
+      # — Build & Push Microservicio de Ingesta —
+      - name: Build ingestion service image
+        run: |
+          docker build services/ingestion \
+            -f services/ingestion/Dockerfile \
+            -t gmktec-g5-ingestion:${{ github.sha }}
+
+      - name: Tag & Push ingestion service
+        run: |
+          IMAGE=${{ env.IMAGE_REGISTRY }}/ingestion
+          TAG=${{ github.sha }}
+          docker tag gmktec-g5-ingestion:${TAG} ${IMAGE}:${TAG}
+          docker tag gmktec-g5-ingestion:${TAG} ${IMAGE}:latest
+          docker push ${IMAGE}:${TAG}
+          docker push ${IMAGE}:latest
+
   deploy:
-    name: Deploy to K3S
+    name: Deploy to K3s
     runs-on: ubuntu-latest
     needs: ci
 
@@ -92,8 +106,31 @@ jobs:
           chmod 600 kubeconfig.yaml
           export KUBECONFIG=$PWD/kubeconfig.yaml
 
-      - name: Apply Kubernetes manifests
+      # — Secret de Ingesta —
+      - name: Create ingestion-env Secret
+        run: |
+          kubectl create secret generic ingestion-env \
+            --from-literal=FOOTBALL_DATA_TOKEN="${{ secrets.FOOTBALL_DATA_TOKEN }}" \
+            --from-literal=ODDS_API_KEY="${{ secrets.ODDS_API_KEY }}" \
+            --from-literal=DB_USER="${{ secrets.DB_USER }}" \
+            --from-literal=DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            --from-literal=DB_HOST="${{ secrets.DB_HOST }}" \
+            --from-literal=DB_PORT="${{ secrets.DB_PORT }}" \
+            --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # — Despliegue de la APP principal —
+      - name: Apply main app manifests
         run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl rollout status deployment/apuestas-predictor
-          kubectl get pods -l app=apuestas-predictor
+
+      # — Despliegue del servicio de ingesta —
+      - name: Apply ingestion manifests
+        run: |
+          kubectl apply -f infra/manifests/ingestion.yaml
+          kubectl rollout status deployment/ingestion
+
+      - name: List Pods
+        run: |
+          kubectl get pods -l app=apuestas-predictor,app=ingestion -o wide
