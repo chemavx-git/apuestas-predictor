@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ingestion
+  namespace: apuestas
   labels:
     app: ingestion
 spec:
@@ -14,19 +15,20 @@ spec:
       labels:
         app: ingestion
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: ingestion
-        image: ghcr.io/${{ github.repository_owner }}/ingestion:latest
+        image: ghcr.io/chemavx-git/ingestion:latest
         envFrom:
         - secretRef:
             name: ingestion-env
-        # no exponemos puertos HTTP internos
-        restartPolicy: Always
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: ingestion-service
+  namespace: apuestas
 spec:
   selector:
     app: ingestion
