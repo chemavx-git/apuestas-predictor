@@ -2,12 +2,11 @@ name: CI/CD Ingestión
 
 on:
   push:
-  push:
     paths:
       - 'services/ingestion/**'
       - 'infra/manifests/ingestion.yaml'
     branches: [ main ]
-  workflow_dispatch:   # <— habilita botón “Run workflow”
+  workflow_dispatch:
 
 env:
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
