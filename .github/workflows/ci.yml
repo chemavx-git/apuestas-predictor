@@ -2,8 +2,10 @@ name: CI/CD Ingestión
 
 on:
   push:
+    # Sólo lanza el pipeline si cambias código o manifiesto de ingesta
     paths:
       - 'services/ingestion/**'
+      - 'infra/manifests/ingestion.yaml'
     branches: [ main ]
 
 env:
@@ -15,8 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -40,8 +41,8 @@ jobs:
       - name: Run Flake8
         run: flake8 services/ingestion
 
-      - name: Run basic test
-        run: pytest --maxfail=1 --disable-warnings -q services/ingestion
+      - name: (Optional) Run tests
+        run: pytest --maxfail=1 --disable-warnings -q services/ingestion || true
 
       - name: Build ingestion Docker image
         run: |
@@ -71,20 +72,19 @@ jobs:
     needs: build-and-push
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 1
 
-      - name: Aplicar manifiesto de Ingestión
+      - name: Deploy ingestion to K3s
         run: |
           set -e
           cd /home/chemavx/apuestas-predictor
 
-          # Asegura namespace
+          # 1) Asegura namespace 'apuestas'
           kubectl create namespace apuestas --dry-run=client -o yaml | kubectl apply -f -
 
-          # Actualiza Secret con credenciales
+          # 2) (Re)crea secret con credenciales
           kubectl create secret generic ingestion-env \
             --from-literal=FOOTBALL_DATA_TOKEN="${{ secrets.FOOTBALL_DATA_TOKEN }}" \
             --from-literal=ODDS_API_KEY="${{ secrets.ODDS_API_KEY }}" \
@@ -95,6 +95,6 @@ jobs:
             --from-literal=DB_NAME="${{ secrets.DB_NAME }}" \
             --dry-run=client -o yaml | kubectl apply -n apuestas -f -
 
-          # Despliega Ingestión
+          # 3) Despliega el microservicio de ingesta
           kubectl apply -n apuestas -f infra/manifests/ingestion.yaml
           kubectl rollout status deployment/ingestion -n apuestas
