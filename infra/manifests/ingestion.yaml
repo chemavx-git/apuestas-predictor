@@ -20,6 +20,7 @@ spec:
       containers:
       - name: ingestion
         image: ghcr.io/chemavx-git/ingestion:latest
+        imagePullPolicy: Always
         envFrom:
         - secretRef:
             name: ingestion-env
