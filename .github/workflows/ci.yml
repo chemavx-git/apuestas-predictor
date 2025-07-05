@@ -2,11 +2,12 @@ name: CI/CD Ingestión
 
 on:
   push:
-    # Solo cuando cambias el código o el manifiesto de ingestión
+  push:
     paths:
       - 'services/ingestion/**'
       - 'infra/manifests/ingestion.yaml'
     branches: [ main ]
+  workflow_dispatch:   # <— habilita botón “Run workflow”
 
 env:
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
