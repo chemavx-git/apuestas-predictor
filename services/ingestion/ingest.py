@@ -1,6 +1,5 @@
 import os
 import logging
-import time
 from datetime import datetime
 import requests
 from sqlalchemy.exc import SQLAlchemyError
@@ -10,30 +9,10 @@ from models import SessionLocal, Team, Match, Odds, Base, engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Endpoints de Football-Data.org v4 y Odds-API v4
-FD_BASE      = "https://api.football-data.org/v4"
-COMPETITION  = "PL"
-ODDS_URL     = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
-
-# Retries para gestionar rate limits (HTTP 429)
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # segundos
-
-def request_with_retry(url, headers=None, params=None):
-    for attempt in range(1, MAX_RETRIES + 1):
-        resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code == 200:
-            return resp
-        if resp.status_code == 429:
-            # Rate limited: espera antes de reintentar
-            retry_after = resp.headers.get("Retry-After")
-            wait = int(retry_after) if retry_after and retry_after.isdigit() else RETRY_DELAY * attempt
-            logger.warning(f"429 en {url}, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})")
-            time.sleep(wait)
-            continue
-        # Otros errores: lanzar excepción
-        resp.raise_for_status()
-    return None
+# Endpoints
+FD_BASE    = "https://api.football-data.org/v4"
+COMP       = "PL"  # Premier League
+ODDS_URL   = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -41,21 +20,16 @@ def create_tables():
 
 def ingest_teams():
     session = SessionLocal()
-    url = f"{FD_BASE}/competitions/{COMPETITION}/teams"
+    url = f"{FD_BASE}/competitions/{COMP}/teams"
     try:
-        resp = request_with_retry(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
-        if not resp:
-            raise Exception("Límite de peticiones alcanzado en teams")
-        teams = resp.json().get("teams", [])
+        r = requests.get(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
+        r.raise_for_status()
+        teams = r.json().get("teams", [])
         logger.info(f"Recibidos {len(teams)} equipos de Football-Data")
-
-        inserted = 0
         for t in teams:
             if not session.get(Team, t["id"]):
                 session.add(Team(id=t["id"], name=t["name"]))
-                inserted += 1
         session.commit()
-        logger.info(f"Insertados {inserted} equipos en la BD")
     except Exception as e:
         logger.error(f"ingest_teams: {e}")
         session.rollback()
@@ -64,31 +38,25 @@ def ingest_teams():
 
 def ingest_matches():
     session = SessionLocal()
-    url = f"{FD_BASE}/competitions/{COMPETITION}/matches"
+    url = f"{FD_BASE}/competitions/{COMP}/matches"
     try:
-        resp = request_with_retry(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
-        if not resp:
-            raise Exception("Límite de peticiones alcanzado en matches")
-        data = resp.json().get("matches", [])
+        r = requests.get(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
+        r.raise_for_status()
+        data = r.json().get("matches", [])
         logger.info(f"Recibidos {len(data)} partidos de Football-Data")
-
         existing = {row[0] for row in session.query(Match.external_id).all()}
-        inserted = 0
-        for item in data:
-            ext_id = str(item["id"])
-            if ext_id in existing:
+        for m in data:
+            ext = str(m["id"])
+            if ext in existing:
                 continue
             session.add(Match(
-                external_id=ext_id,
-                utc_date=item["utcDate"],
-                home_team_id=item["homeTeam"]["id"],
-                away_team_id=item["awayTeam"]["id"],
-                competition=item["competition"]["name"],
+                external_id=ext,
+                utc_date=m["utcDate"],
+                home_team_id=m["homeTeam"]["id"],
+                away_team_id=m["awayTeam"]["id"],
+                competition=m["competition"]["name"],
             ))
-            inserted += 1
-
         session.commit()
-        logger.info(f"Insertados {inserted} partidos en la BD")
     except Exception as e:
         logger.error(f"ingest_matches: {e}")
         session.rollback()
@@ -98,31 +66,35 @@ def ingest_matches():
 def ingest_odds():
     session = SessionLocal()
     try:
-        resp = requests.get(ODDS_URL, params={
+        r = requests.get(ODDS_URL, params={
             "regions": "uk",
             "markets": "h2h",
             "apiKey": os.getenv("ODDS_API_KEY")
         })
-        resp.raise_for_status()
-        odds_list = resp.json()
+        r.raise_for_status()
+        odds_list = r.json()
         logger.info(f"Recibidas {len(odds_list)} cuotas de Odds-API")
 
-        # Mapas para matching por nombres de equipo
-        teams_map = {t.name: t.id for t in session.query(Team).all()}
-        matches_map = {
-            (m.home_team_id, m.away_team_id): m.id
-            for m in session.query(Match).all()
-        }
+        # Cargo los equipos y partidos para hacer matching
+        teams = session.query(Team).all()
+        team_names = [(t.name.lower(), t.id) for t in teams]
+        matches = session.query(Match).all()
+        match_map = { (m.home_team_id, m.away_team_id): m.id for m in matches }
 
         inserted = 0
         for o in odds_list:
-            home = o.get("home_team")
-            away = o.get("away_team")
-            hid = teams_map.get(home)
-            aid = teams_map.get(away)
+            home_str = (o.get("home_team") or "").lower()
+            away_str = (o.get("away_team") or "").lower()
+
+            # Fuzzy match por substrings
+            hid = next((tid for name, tid in team_names
+                        if name in home_str or home_str in name), None)
+            aid = next((tid for name, tid in team_names
+                        if name in away_str or away_str in name), None)
             if not hid or not aid:
                 continue
-            mid = matches_map.get((hid, aid))
+
+            mid = match_map.get((hid, aid))
             if not mid:
                 continue
 
