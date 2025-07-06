@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from datetime import datetime
 import requests
 from sqlalchemy.exc import SQLAlchemyError
@@ -9,10 +10,30 @@ from models import SessionLocal, Team, Match, Odds, Base, engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Football-Data.org v4 y Odds-API v4
-FD_BASE = "https://api.football-data.org/v4"
-COMPETITION = "PL"
-ODDS_URL   = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+# Endpoints de Football-Data.org v4 y Odds-API v4
+FD_BASE      = "https://api.football-data.org/v4"
+COMPETITION  = "PL"
+ODDS_URL     = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+
+# Retries para gestionar rate limits (HTTP 429)
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # segundos
+
+def request_with_retry(url, headers=None, params=None):
+    for attempt in range(1, MAX_RETRIES + 1):
+        resp = requests.get(url, headers=headers, params=params)
+        if resp.status_code == 200:
+            return resp
+        if resp.status_code == 429:
+            # Rate limited: espera antes de reintentar
+            retry_after = resp.headers.get("Retry-After")
+            wait = int(retry_after) if retry_after and retry_after.isdigit() else RETRY_DELAY * attempt
+            logger.warning(f"429 en {url}, reintentando en {wait}s (intento {attempt}/{MAX_RETRIES})")
+            time.sleep(wait)
+            continue
+        # Otros errores: lanzar excepción
+        resp.raise_for_status()
+    return None
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -22,14 +43,19 @@ def ingest_teams():
     session = SessionLocal()
     url = f"{FD_BASE}/competitions/{COMPETITION}/teams"
     try:
-        resp = requests.get(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
-        resp.raise_for_status()
+        resp = request_with_retry(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
+        if not resp:
+            raise Exception("Límite de peticiones alcanzado en teams")
         teams = resp.json().get("teams", [])
         logger.info(f"Recibidos {len(teams)} equipos de Football-Data")
+
+        inserted = 0
         for t in teams:
             if not session.get(Team, t["id"]):
                 session.add(Team(id=t["id"], name=t["name"]))
+                inserted += 1
         session.commit()
+        logger.info(f"Insertados {inserted} equipos en la BD")
     except Exception as e:
         logger.error(f"ingest_teams: {e}")
         session.rollback()
@@ -40,23 +66,29 @@ def ingest_matches():
     session = SessionLocal()
     url = f"{FD_BASE}/competitions/{COMPETITION}/matches"
     try:
-        resp = requests.get(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
-        resp.raise_for_status()
+        resp = request_with_retry(url, headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")})
+        if not resp:
+            raise Exception("Límite de peticiones alcanzado en matches")
         data = resp.json().get("matches", [])
         logger.info(f"Recibidos {len(data)} partidos de Football-Data")
-        existing = {m.external_id for (m.external_id,) in session.query(Match.external_id).all()}
-        for m in data:
-            ext = str(m["id"])
-            if ext in existing:
+
+        existing = {row[0] for row in session.query(Match.external_id).all()}
+        inserted = 0
+        for item in data:
+            ext_id = str(item["id"])
+            if ext_id in existing:
                 continue
             session.add(Match(
-                external_id=ext,
-                utc_date=m["utcDate"],
-                home_team_id=m["homeTeam"]["id"],
-                away_team_id=m["awayTeam"]["id"],
-                competition=m["competition"]["name"],
+                external_id=ext_id,
+                utc_date=item["utcDate"],
+                home_team_id=item["homeTeam"]["id"],
+                away_team_id=item["awayTeam"]["id"],
+                competition=item["competition"]["name"],
             ))
+            inserted += 1
+
         session.commit()
+        logger.info(f"Insertados {inserted} partidos en la BD")
     except Exception as e:
         logger.error(f"ingest_matches: {e}")
         session.rollback()
@@ -75,12 +107,12 @@ def ingest_odds():
         odds_list = resp.json()
         logger.info(f"Recibidas {len(odds_list)} cuotas de Odds-API")
 
-        # Cache de equipos y partidos en memoria para matching por nombre
+        # Mapas para matching por nombres de equipo
         teams_map = {t.name: t.id for t in session.query(Team).all()}
-        matches_map = {}
-        for pm in session.query(Match).all():
-            key = (pm.home_team_id, pm.away_team_id)
-            matches_map[key] = pm.id
+        matches_map = {
+            (m.home_team_id, m.away_team_id): m.id
+            for m in session.query(Match).all()
+        }
 
         inserted = 0
         for o in odds_list:
@@ -99,7 +131,7 @@ def ingest_odds():
                     if mkt.get("key") != "h2h":
                         continue
                     for outcome in mkt.get("outcomes", []):
-                        price = outcome.get("price") or outcome.get("priceDecimal")
+                        price = outcome.get("price")
                         if price is None:
                             continue
                         session.add(Odds(
