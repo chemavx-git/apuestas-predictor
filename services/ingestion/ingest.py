@@ -9,23 +9,28 @@ from models import SessionLocal, Team, Match, Odds, Base, engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Constantes API Football-Data.org
+FTD_BASE = "https://api.football-data.org/v2"
+COMPETITION_CODE = "PL"
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
     logger.info("Tablas creadas o verificadas.")
 
 def ingest_teams():
     session = SessionLocal()
+    url = f"{FTD_BASE}/competitions/{COMPETITION_CODE}/teams"
     try:
-        response = requests.get(
-            "https://api.football-data.org/v2/teams",
+        resp = requests.get(
+            url,
             headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
         )
-        response.raise_for_status()
-        teams_data = response.json().get("teams", [])
-        logger.info(f"Recibidos {len(teams_data)} equipos desde Football-Data.org")
+        resp.raise_for_status()
+        teams = resp.json().get("teams", [])
+        logger.info(f"Recibidos {len(teams)} equipos de {url}")
 
         inserted = 0
-        for t in teams_data:
+        for t in teams:
             obj = Team(id=t["id"], name=t["name"])
             session.merge(obj)
             inserted += 1
@@ -41,25 +46,18 @@ def ingest_teams():
 
 def ingest_matches():
     session = SessionLocal()
+    url = f"{FTD_BASE}/competitions/{COMPETITION_CODE}/matches"
     try:
-        page = 1
-        matches_data = []
-        while True:
-            resp = requests.get(
-                f"https://api.football-data.org/v2/matches?page={page}",
-                headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
-            )
-            resp.raise_for_status()
-            data = resp.json().get("matches", [])
-            if not data:
-                break
-            matches_data.extend(data)
-            page += 1
-
-        logger.info(f"Recibidos {len(matches_data)} partidos desde Football-Data.org")
+        resp = requests.get(
+            url,
+            headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
+        )
+        resp.raise_for_status()
+        matches = resp.json().get("matches", [])
+        logger.info(f"Recibidos {len(matches)} partidos de {url}")
 
         inserted = 0
-        for m in matches_data:
+        for m in matches:
             obj = Match(
                 external_id=str(m["id"]),
                 utc_date=m["utcDate"],
@@ -81,28 +79,38 @@ def ingest_matches():
 
 def ingest_odds():
     session = SessionLocal()
+    url = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
     try:
-        response = requests.get(
-            "https://api.the-odds-api.com/v4/sports/soccer_epl/odds",
+        resp = requests.get(
+            url,
             params={
                 "regions": "uk",
                 "markets": "h2h",
                 "apiKey": os.getenv("ODDS_API_KEY")
             }
         )
-        response.raise_for_status()
-        odds_data = response.json()
-        logger.info(f"Recibidas {len(odds_data)} cuotas desde Odds-API")
+        resp.raise_for_status()
+        odds_list = resp.json()
+        logger.info(f"Recibidas {len(odds_list)} cuotas de {url}")
 
         inserted = 0
-        for o in odds_data:
-            market = o["markets"][0]
-            outcome = market["outcomes"][0]
+        for o in odds_list:
+            markets = o.get("markets") or []
+            if not markets:
+                continue
+            outcomes = markets[0].get("outcomes") or []
+            if not outcomes:
+                continue
+            outcome = outcomes[0]
+            try:
+                match_id = int(o.get("match_id"))
+            except (TypeError, ValueError):
+                continue
             obj = Odds(
-                match_id=int(o["match_id"]),
+                match_id=match_id,
                 provider="Odds-API",
-                market=market["key"],
-                decimal_odds=outcome["price"],
+                market=markets[0].get("key", "h2h"),
+                decimal_odds=outcome.get("price", 0.0),
                 fetched_at=datetime.utcnow()
             )
             session.add(obj)
