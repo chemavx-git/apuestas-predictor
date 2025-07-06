@@ -57,7 +57,7 @@ class Match(Base):
     __tablename__ = "matches"
 
     id            = Column(Integer, primary_key=True)
-    external_id   = Column(Integer, nullable=False, unique=True)
+    external_id   = Column(String, nullable=False, unique=True)
     utc_date      = Column(DateTime, nullable=False)
     home_team_id  = Column(Integer, ForeignKey("teams.id"), nullable=False)
     away_team_id  = Column(Integer, ForeignKey("teams.id"), nullable=False)
