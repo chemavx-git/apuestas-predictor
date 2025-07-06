@@ -33,7 +33,19 @@ class Team(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
 
-    matches = relationship("Match", back_populates="team")
+    # Relaciones explícitas para partidos como local y visitante
+    home_matches = relationship(
+        "Match",
+        foreign_keys="[Match.home_team_id]",
+        back_populates="home_team",
+        cascade="all, delete-orphan",
+    )
+    away_matches = relationship(
+        "Match",
+        foreign_keys="[Match.away_team_id]",
+        back_populates="away_team",
+        cascade="all, delete-orphan",
+    )
 
 
 class Match(Base):
@@ -45,8 +57,17 @@ class Match(Base):
     away_team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
     competition = Column(String, nullable=False)
 
-    home_team = relationship("Team", foreign_keys=[home_team_id])
-    away_team = relationship("Team", foreign_keys=[away_team_id])
+    # Relaciones inversas hacia Team
+    home_team = relationship(
+        "Team",
+        foreign_keys=[home_team_id],
+        back_populates="home_matches"
+    )
+    away_team = relationship(
+        "Team",
+        foreign_keys=[away_team_id],
+        back_populates="away_matches"
+    )
 
     __table_args__ = (UniqueConstraint("external_id", name="uq_match_external"),)
 
