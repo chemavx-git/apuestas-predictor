@@ -1,123 +1,71 @@
-import os
-import time
 import logging
-from datetime import datetime
+from models import SessionLocal, Team, Match, Odds, Base, engine
 import requests
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
-from models import SessionLocal, Team, Match, Odds, engine, Base
-from dotenv import load_dotenv
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Configuración
-FD_URL = "https://api.football-data.org/v4/matches"
-ODDS_URL = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
-HEADERS_FD = {"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
-ODDS_KEY = os.getenv("ODDS_API_KEY")
-
-
-# Decorador de reintentos para llamadas HTTP
-@retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type(requests.exceptions.RequestException),
-)
-def fetch_json(url, params=None, headers=None):
-    resp = requests.get(url, params=params, headers=headers, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def ingest_football_data():
+def ingest_teams():
     session = SessionLocal()
-    try:
-        page = 1
-        while True:
-            params = {"page": page, "limit": 100}
-            data = fetch_json(FD_URL, params=params, headers=HEADERS_FD)
-            matches = data.get("matches", [])
-            if not matches:
-                break
+    response = requests.get(
+        "https://api.football-data.org/v2/teams",
+        headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
+    )
+    teams_data = response.json()
+    logger.info(f"Recibidos {len(teams_data)} equipos desde Football-Data.org")
+    
+    inserted = 0
+    for t in teams_data:
+        obj = Team(id=t["id"], name=t["name"])
+        session.merge(obj)
+        inserted += 1
+    session.commit()
+    logger.info(f"Insertados {inserted} equipos en la BD")
+    session.close()
 
-            for m in matches:
-                # Equipos
-                for side in ("homeTeam", "awayTeam"):
-                    team_name = m[side]["name"]
-                    team = session.query(Team).filter_by(name=team_name).first()
-                    if not team:
-                        team = Team(name=team_name)
-                        session.add(team)
-                        session.commit()
-                # Partidos
-                ext_id = m["id"]
-                if not session.query(Match).filter_by(external_id=ext_id).first():
-                    match = Match(
-                        external_id=ext_id,
-                        utc_date=datetime.fromisoformat(
-                            m["utcDate"].replace("Z", "+00:00")
-                        ),
-                        home_team_id=session.query(Team)
-                        .filter_by(name=m["homeTeam"]["name"])
-                        .one()
-                        .id,
-                        away_team_id=session.query(Team)
-                        .filter_by(name=m["awayTeam"]["name"])
-                        .one()
-                        .id,
-                        competition=m["competition"]["name"],
-                    )
-                    session.add(match)
-                    session.commit()
-            page += 1
-            time.sleep(1)  # para no superar límites
-
-    except Exception as e:
-        logging.error(f"Error ingestando Football-Data: {e}")
-    finally:
-        session.close()
-
-
-def ingest_odds_data():
+def ingest_matches():
     session = SessionLocal()
-    try:
-        params = {
-            "apiKey": ODDS_KEY,
-            "regions": "eu",
-            "markets": "h2h",
-            "prematch": "true",
-        }
-        odds_list = fetch_json(ODDS_URL, params=params)
-        for o in odds_list:
-            match = session.query(Match).filter_by(external_id=o["id"]).first()
-            if not match:
-                continue
-            for site in o.get("bookmakers", []):
-                for market in site.get("markets", []):
-                    for outcome in market.get("outcomes", []):
-                        odd = Odds(
-                            match_id=match.id,
-                            provider=site["title"],
-                            market=market["key"],
-                            decimal_odds=outcome["price"],
-                            fetched_at=datetime.utcnow(),
-                        )
-                        session.add(odd)
-        session.commit()
+    # … tu lógica de paginación …
+    matches_data = [...]
+    logger.info(f"Recibidos {len(matches_data)} partidos")
+    inserted = 0
+    for m in matches_data:
+        obj = Match(
+            external_id=str(m["id"]),  # ya lo tienes como string
+            utc_date=m["utcDate"],
+            home_team_id=m["homeTeam"]["id"],
+            away_team_id=m["awayTeam"]["id"],
+            competition=m["competition"]["name"],
+        )
+        session.merge(obj)
+        inserted += 1
+    session.commit()
+    logger.info(f"Insertados {inserted} partidos en la BD")
+    session.close()
 
-    except Exception as e:
-        logging.error(f"Error ingestando Odds-API: {e}")
-    finally:
-        session.close()
-
+def ingest_odds():
+    session = SessionLocal()
+    # … tu llamada a Odds-API …
+    odds_data = [...]
+    logger.info(f"Recibidas {len(odds_data)} cuotas desde Odds-API")
+    inserted = 0
+    for o in odds_data:
+        obj = Odds(
+            match_id= ...,
+            provider="Odds-API",
+            market="h2h",
+            decimal_odds=o["markets"][0]["outcomes"][0]["price"],
+            fetched_at=datetime.utcnow(),
+        )
+        session.add(obj)
+        inserted += 1
+    session.commit()
+    logger.info(f"Insertadas {inserted} cuotas en la BD")
+    session.close()
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)
-    ingest_football_data()
-    ingest_odds_data()
-    logging.info("Ingesta completada.")
+    ingest_teams()
+    ingest_matches()
+    ingest_odds()
+    logger.info("Ingesta completada.")
