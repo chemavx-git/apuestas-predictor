@@ -9,9 +9,9 @@ from models import SessionLocal, Team, Match, Odds, Base, engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Usamos v4 de Football-Data.org
-API_BASE          = "https://api.football-data.org/v4"
-COMPETITION_CODE  = "PL"   # Premier League
+# Endpoints de Football-Data.org v4
+API_BASE         = "https://api.football-data.org/v4"
+COMPETITION_CODE = "PL"  # Premier League
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -31,9 +31,10 @@ def ingest_teams():
 
         inserted = 0
         for t in teams:
-            obj = Team(id=t["id"], name=t["name"])
-            session.merge(obj)
-            inserted += 1
+            if not session.query(Team).get(t["id"]):
+                obj = Team(id=t["id"], name=t["name"])
+                session.add(obj)
+                inserted += 1
         session.commit()
         logger.info(f"Insertados {inserted} equipos en la BD")
     except requests.RequestException as e:
@@ -56,16 +57,22 @@ def ingest_matches():
         matches = resp.json().get("matches", [])
         logger.info(f"Recibidos {len(matches)} partidos de {url}")
 
+        # Evitar duplicados
+        existing_ids = {m[0] for m in session.query(Match.external_id).all()}
+
         inserted = 0
         for m in matches:
+            ext_id = str(m["id"])
+            if ext_id in existing_ids:
+                continue
             obj = Match(
-                external_id=str(m["id"]),
+                external_id=ext_id,
                 utc_date=m["utcDate"],
                 home_team_id=m["homeTeam"]["id"],
                 away_team_id=m["awayTeam"]["id"],
                 competition=m["competition"]["name"]
             )
-            session.merge(obj)
+            session.add(obj)
             inserted += 1
         session.commit()
         logger.info(f"Insertados {inserted} partidos en la BD")
