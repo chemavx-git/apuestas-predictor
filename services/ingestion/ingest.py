@@ -10,8 +10,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Endpoints de Football-Data.org
-FTD_BASE = "https://api.football-data.org/v2"
-COMPETITION_ID = "2021"   # Premier League
+API_BASE = "https://api.football-data.org/v2"
+COMPETITION_ID = "2021"  # Premier League
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -19,7 +19,7 @@ def create_tables():
 
 def ingest_teams():
     session = SessionLocal()
-    url = f"{FTD_BASE}/competitions/{COMPETITION_ID}/teams"
+    url = f"{API_BASE}/teams"
     try:
         resp = requests.get(
             url,
@@ -46,7 +46,7 @@ def ingest_teams():
 
 def ingest_matches():
     session = SessionLocal()
-    url = f"{FTD_BASE}/competitions/{COMPETITION_ID}/matches"
+    url = f"{API_BASE}/matches?competitions={COMPETITION_ID}"
     try:
         resp = requests.get(
             url,
