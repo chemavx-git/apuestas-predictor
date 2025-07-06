@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Endpoints de Football-Data.org v4
-API_BASE = "https://api.football-data.org/v4"
+API_BASE         = "https://api.football-data.org/v4"
 COMPETITION_CODE = "PL"  # Premier League
 
 def create_tables():
@@ -51,23 +51,27 @@ def ingest_matches():
             headers={"X-Auth-Token": os.getenv("FOOTBALL_DATA_TOKEN")}
         )
         resp.raise_for_status()
-        matches = resp.json().get("matches", [])
-        logger.info(f"Recibidos {len(matches)} partidos de {url}")
+        data = resp.json().get("matches", [])
+        logger.info(f"Recibidos {len(data)} partidos de {url}")
 
-        existing_ids = {m.external_id for (m.external_id,) in session.query(Match.external_id).all()}
+        # IDs ya en BD
+        existing_ids = {row[0] for row in session.query(Match.external_id).all()}
+
         inserted = 0
-        for m in matches:
-            ext = str(m["id"])
-            if ext in existing_ids:
+        for item in data:
+            ext_id = str(item["id"])
+            if ext_id in existing_ids:
                 continue
-            session.add(Match(
-                external_id=ext,
-                utc_date=m["utcDate"],
-                home_team_id=m["homeTeam"]["id"],
-                away_team_id=m["awayTeam"]["id"],
-                competition=m["competition"]["name"],
-            ))
+            match = Match(
+                external_id=ext_id,
+                utc_date=item["utcDate"],
+                home_team_id=item["homeTeam"]["id"],
+                away_team_id=item["awayTeam"]["id"],
+                competition=item["competition"]["name"],
+            )
+            session.add(match)
             inserted += 1
+
         session.commit()
         logger.info(f"Insertados {inserted} partidos en la BD")
     except Exception as e:
@@ -94,8 +98,8 @@ def ingest_odds():
 
         inserted = 0
         for o in odds_list:
-            ext = str(o.get("match_id"))
-            match = session.query(Match).filter_by(external_id=ext).first()
+            ext_id = str(o.get("match_id"))
+            match = session.query(Match).filter_by(external_id=ext_id).first()
             if not match:
                 continue
             for bk in o.get("bookmakers", []):
@@ -114,6 +118,7 @@ def ingest_odds():
                             fetched_at=datetime.utcnow()
                         ))
                         inserted += 1
+
         session.commit()
         logger.info(f"Insertadas {inserted} cuotas en la BD")
     except Exception as e:
