@@ -9,9 +9,9 @@ from models import SessionLocal, Team, Match, Odds, Base, engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Endpoints de Football-Data.org
-API_BASE = "https://api.football-data.org/v2"
-COMPETITION_ID = "2021"  # Premier League
+# Usamos v4 de Football-Data.org
+API_BASE          = "https://api.football-data.org/v4"
+COMPETITION_CODE  = "PL"   # Premier League
 
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -19,7 +19,7 @@ def create_tables():
 
 def ingest_teams():
     session = SessionLocal()
-    url = f"{API_BASE}/teams"
+    url = f"{API_BASE}/competitions/{COMPETITION_CODE}/teams"
     try:
         resp = requests.get(
             url,
@@ -46,7 +46,7 @@ def ingest_teams():
 
 def ingest_matches():
     session = SessionLocal()
-    url = f"{API_BASE}/matches?competitions={COMPETITION_ID}"
+    url = f"{API_BASE}/competitions/{COMPETITION_CODE}/matches"
     try:
         resp = requests.get(
             url,
