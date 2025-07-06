@@ -1,0 +1,25 @@
+# k8s/ingestion-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ingestion-cron
+  namespace: apuestas
+spec:
+  schedule: "0 * * * *"              # Cada hora, minuto 0
+  concurrencyPolicy: Forbid          # No ejecutar dos a la vez
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+          - name: ghcr-secret
+          containers:
+          - name: ingestion
+            image: ghcr.io/chemavx-git/ingestion:latest
+            args: ["--drop-tables"]   # Borra y recrea tablas antes de ingestar
+            envFrom:
+            - secretRef:
+                name: ingestion-env
+          restartPolicy: OnFailure
